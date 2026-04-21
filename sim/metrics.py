@@ -29,6 +29,11 @@ class SimulationMetrics:
     bearer_switch_time_ms: float = 0.0
     transition_time_ms: float = 0.0
     gap_free: bool = False
+    early_switches: int = 0
+    late_switches: int = 0
+    unnecessary_prewarm_events: int = 0
+    ping_pong_count: int = 0
+    average_prediction_lead_time_ms: float = 0.0
 
     def summary(self) -> dict[str, float]:
         total_packets = self.delivered_packets + self.lost_packets
@@ -47,6 +52,11 @@ class SimulationMetrics:
             "bearer_switch_time_ms": round(self.bearer_switch_time_ms, 2),
             "transition_time_ms": round(self.transition_time_ms, 2),
             "gap_free": float(self.gap_free),
+            "early_switches": float(self.early_switches),
+            "late_switches": float(self.late_switches),
+            "unnecessary_prewarm_events": float(self.unnecessary_prewarm_events),
+            "ping_pong_count": float(self.ping_pong_count),
+            "average_prediction_lead_time_ms": round(self.average_prediction_lead_time_ms, 2),
             "energy_mj": round(self.energy_mj, 2),
             "average_power_mw": round(self.average_power_mw, 2),
             "energy_per_delivered_packet_uj": round(self.energy_per_delivered_packet_uj, 2),

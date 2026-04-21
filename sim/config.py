@@ -26,8 +26,17 @@ class SimulationConfig:
     prewarm_steps: int = 15
     overlap_steps: int = 10
     predictive_switch_hold_steps: int = 2
+    min_link_hold_steps: int = 30
+    return_switch_hold_steps: int = 4
+    predictive_horizon_steps: int = 30
+    predictive_gain_threshold: float = 0.035
+    predictive_prewarm_gain_threshold: float = 0.015
+    ping_pong_window_steps: int = 120
     p2p_switch_threshold: float = 0.24
     prewarm_threshold: float = 0.22
+    p2p_return_success_threshold: float = 0.93
+    p2p_return_distance_m: float = 4.5
+    whc_return_hysteresis_margin: float = 0.03
     le_base_power_mw: float = 28.0
     p2p_base_power_mw: float = 40.0
     whc_standby_power_mw: float = 70.0

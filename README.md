@@ -8,6 +8,119 @@ This repository contains a lightweight Python simulator for studying XPAN earbud
 
 The simulator is intentionally system-level rather than packet-level. The goal is to iterate quickly on handover, coverage, and power-management ideas before moving into a heavier environment.
 
+## How To Use The Simulator
+
+### Requirements
+
+- Python 3.10 or newer
+- Run from the repository root so the `sim` package resolves correctly
+
+If you are using the local Python installed in this workspace, the command is:
+
+```bash
+/Users/apple/Code/Python/.local/python-3.10.14/bin/python3.10 -m sim.run
+```
+
+If `python3.10` is already on your `PATH`, you can use:
+
+```bash
+python3.10 -m sim.run
+```
+
+Important note:
+
+- Do not run `python sim/run.py` directly. Use `python -m sim.run` from the repo root.
+
+### What The Simulator Runs
+
+The default entrypoint iterates through all built-in combinations of:
+
+- profiles:
+  - `normal_buds`
+  - `xpan_reactive`
+  - `xpan_predictive`
+  - `xpan_service_aware`
+- scenarios:
+  - `walk_away`
+  - `body_blockage`
+  - `mesh_backhaul_stress`
+  - `service_aware_use_cases`
+- power strategies:
+  - `always_on`
+  - `static_twt`
+  - `adaptive_twt`
+  - `predictive_prewake`
+
+`normal_buds` currently runs only with `always_on`, while the XPAN profiles run across all supported power strategies.
+
+### Reading The Output
+
+For each scenario/profile/strategy combination, the simulator prints a result block that includes:
+
+- topology and policy context:
+  - `profile`
+  - `scenario`
+  - `power_strategy`
+  - `initial_link`
+  - `handover_target`
+  - `service_type`
+  - `phone_low_power`
+- QoE and link metrics:
+  - `average_latency_ms`
+  - `packet_loss_rate`
+  - `interruptions_ms`
+  - `underruns`
+  - `average_data_rate_mbps`
+  - `peak_data_rate_mbps`
+  - `min_active_rssi_dbm`
+- handover metrics:
+  - `handovers`
+  - `cold_switches`
+  - `bearer_switch_time_ms`
+  - `transition_time_ms`
+  - `gap_free`
+  - `early_switches`
+  - `late_switches`
+  - `unnecessary_prewarm_events`
+  - `ping_pong_count`
+  - `average_prediction_lead_time_ms`
+- power metrics:
+  - `energy_mj`
+  - `average_power_mw`
+  - `energy_per_delivered_packet_uj`
+  - `le_energy_mj`
+  - `p2p_energy_mj`
+  - `whc_active_energy_mj`
+  - `whc_standby_energy_mj`
+  - `overlap_energy_mj`
+  - `whc_prewarm_time_ms`
+  - `whc_active_time_ms`
+  - `overlap_time_ms`
+  - `average_awake_ratio`
+- KPI verdicts:
+  - `kpi_checks`
+
+`kpi_checks` is the quickest way to see whether a given policy meets the simulator's current working targets.
+
+### Main Files To Modify
+
+If you want to extend the simulator, these are the main entry points:
+
+- `sim/environment.py` for scenario design
+- `sim/link_models.py` for bearer quality models
+- `sim/controller.py` for bearer-selection logic
+- `sim/handover.py` for transition behavior
+- `sim/power.py` for Wi-Fi power-management policies
+- `sim/metrics.py` for new summary metrics
+- `sim/config.py` for shared thresholds and constants
+
+### Typical Workflow
+
+1. Adjust a scenario, controller, or model.
+2. Run `python3.10 -m sim.run` from the repo root.
+3. Compare the output blocks across profiles and power strategies.
+4. Check `kpi_checks` first, then inspect latency, handover, and power tradeoffs in more detail.
+
 ## Current Summary
 
 What has been built so far:
@@ -143,6 +256,53 @@ What has now been implemented from these use cases:
   - phone low-power mode
 
 ## Change Log
+
+### 2026-04-21: Added short-horizon predictive handover scoring
+
+Why this addition was made:
+
+- Simple threshold-triggered prediction was useful, but it was still too close to reactive behavior.
+- To study stronger XPAN handover ideas, the simulator should estimate near-future bearer quality and measure whether prediction is early, late, or wasteful.
+
+What was added:
+
+- A short-horizon quality projection for `P2P` and `WHC`
+- Predictive switch-gain scoring in addition to raw degradation risk
+- Earlier `WHC` prewarm when the projected whole-home path is expected to outperform direct `P2P`
+- New handover-evaluation metrics:
+  - `early_switches`
+  - `late_switches`
+  - `unnecessary_prewarm_events`
+  - `ping_pong_count`
+  - `average_prediction_lead_time_ms`
+
+Why this matters:
+
+- It lets the simulator ask not only "did we switch?" but "did we switch at the right time?"
+- It provides a cleaner bridge toward future hybrid rule-based and ML-based handover research.
+
+### 2026-04-21: Improved handover stability and recovery behavior
+
+Why this addition was made:
+
+- The earlier handover model was mostly threshold-driven and could behave too much like a one-way trigger.
+- For XPAN policy work, the simulator should represent not just fallback behavior but also stability, anti-ping-pong behavior, and recovery back to a better bearer.
+
+What was added:
+
+- Minimum active-link dwell time before non-forced bearer changes
+- Hysteresis-like hold behavior for return transitions
+- Predictive recovery from `WHC -> P2P` when direct link quality clearly improves
+- More stable service-aware switching between `LE`, `P2P`, and `WHC`
+- Forced immediate switch handling for policy-driven cases such as:
+  - voice call preferring `LE`
+  - phone low-power mode preferring `LE`
+
+Why this matters:
+
+- It makes bearer transitions look more like a real controller and less like an instantaneous threshold crossing.
+- It reduces unrealistic oscillation between bearers.
+- It lets the simulator study both degradation-driven fallback and improvement-driven return behavior.
 
 ### 2026-04-21: Added richer power measurements
 

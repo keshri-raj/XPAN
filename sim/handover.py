@@ -7,6 +7,7 @@ from sim.controller import ControllerDecision
 @dataclass
 class HandoverStatus:
     active_link: str
+    active_link_steps: int = 0
     whc_prewarmed_steps: int = 0
     overlap_steps_remaining: int = 0
     handovers: int = 0
@@ -19,6 +20,7 @@ class HandoverEngine:
         self.status = HandoverStatus(active_link=initial_link)
 
     def update(self, decision: ControllerDecision) -> HandoverStatus:
+        self.status.active_link_steps += 1
         # Prewarm only applies while P2P is still the active bearer.
         if decision.prewarm_whc and self.status.active_link == "p2p":
             self.status.whc_prewarmed_steps = min(
@@ -29,21 +31,31 @@ class HandoverEngine:
             self.status.whc_prewarmed_steps = max(0, self.status.whc_prewarmed_steps - 1)
 
         target_link = decision.target_link
+        can_switch = (
+            target_link == self.status.active_link
+            or decision.force_switch
+            or self.status.active_link_steps >= self.config.min_link_hold_steps
+        )
         if target_link == "whc" and self.status.active_link == "p2p":
+            if not can_switch:
+                return self.status
             if self.status.whc_prewarmed_steps >= self.config.prewarm_steps:
                 # Warm handover approximates make-before-break by allowing a
                 # short overlap window between the two bearers.
                 self.status.active_link = "whc"
+                self.status.active_link_steps = 0
                 self.status.overlap_steps_remaining = self.config.overlap_steps
                 self.status.handovers += 1
             elif not decision.prewarm_whc:
                 # Cold handover jumps directly to WHC once P2P has degraded.
                 self.status.active_link = "whc"
+                self.status.active_link_steps = 0
                 self.status.overlap_steps_remaining = 0
                 self.status.cold_switches += 1
                 self.status.handovers += 1
-        elif target_link in {"le", "p2p"} and target_link != self.status.active_link:
+        elif target_link in {"le", "p2p"} and target_link != self.status.active_link and can_switch:
             self.status.active_link = target_link
+            self.status.active_link_steps = 0
             self.status.overlap_steps_remaining = 0
             self.status.handovers += 1
 

@@ -152,6 +152,13 @@ def run_simulation(
             prewarm_threshold=config.prewarm_threshold,
             switch_threshold=config.p2p_switch_threshold,
             hold_steps=config.predictive_switch_hold_steps,
+            return_hold_steps=config.return_switch_hold_steps,
+            predictive_horizon_steps=config.predictive_horizon_steps,
+            predictive_gain_threshold=config.predictive_gain_threshold,
+            predictive_prewarm_gain_threshold=config.predictive_prewarm_gain_threshold,
+            p2p_return_success_threshold=config.p2p_return_success_threshold,
+            p2p_return_distance_m=config.p2p_return_distance_m,
+            whc_return_hysteresis_margin=config.whc_return_hysteresis_margin,
         )
     elif profile_name == "xpan_service_aware":
         initial_link = "p2p"
@@ -159,6 +166,13 @@ def run_simulation(
             prewarm_threshold=config.prewarm_threshold,
             switch_threshold=config.p2p_switch_threshold,
             hold_steps=config.predictive_switch_hold_steps,
+            return_hold_steps=config.return_switch_hold_steps,
+            predictive_horizon_steps=config.predictive_horizon_steps,
+            predictive_gain_threshold=config.predictive_gain_threshold,
+            predictive_prewarm_gain_threshold=config.predictive_prewarm_gain_threshold,
+            p2p_return_success_threshold=config.p2p_return_success_threshold,
+            p2p_return_distance_m=config.p2p_return_distance_m,
+            whc_return_hysteresis_margin=config.whc_return_hysteresis_margin,
         )
     else:
         raise ValueError(f"Unknown profile: {profile_name}")
@@ -174,6 +188,13 @@ def run_simulation(
     prewarm_start_step: int | None = None
     switch_step: int | None = None
     switch_interruption_ms = 0.0
+    prewarm_episode_steps = 0
+    prewarm_episode_committed = False
+    lead_times_ms: list[float] = []
+    previous_link = initial_link
+    previous_handover_step: int | None = None
+    previous_handover_from = initial_link
+    previous_handover_to = initial_link
     steps = int(config.duration_s * 1000 / config.step_ms)
     for step in range(steps):
         time_s = step * config.step_ms / 1000.0
@@ -187,15 +208,43 @@ def run_simulation(
         if controller is None:
             status = handover.status
         else:
-            if profile_name == "xpan_service_aware":
-                decision = controller.decide(handover.status.active_link, le, p2p, whc, env)
-            else:
-                decision = controller.decide(p2p, whc, env)
+            decision = controller.decide(handover.status.active_link, le, p2p, whc, env)
             status = handover.update(decision)
+        if status.whc_prewarmed_steps > 0:
+            prewarm_episode_steps += 1
+        elif prewarm_episode_steps > 0:
+            if not prewarm_episode_committed:
+                metrics.unnecessary_prewarm_events += 1
+            prewarm_episode_steps = 0
+            prewarm_episode_committed = False
+            prewarm_start_step = None
         if controller is not None and decision.prewarm_whc and prewarm_start_step is None and handover.status.active_link == "p2p":
             prewarm_start_step = step
         if switch_step is None and status.active_link == "whc":
             switch_step = step
+        if status.active_link != previous_link:
+            handover_from = previous_link
+            handover_to = status.active_link
+            if handover_from == "p2p" and handover_to == "whc":
+                prewarm_episode_committed = True
+                if prewarm_start_step is not None:
+                    lead_times_ms.append((step - prewarm_start_step) * config.step_ms)
+                if p2p.success_prob > 0.94 and p2p.latency_ms + p2p.jitter_ms < 20.0:
+                    metrics.early_switches += 1
+                if status.overlap_steps_remaining == 0 or p2p.success_prob < 0.8:
+                    metrics.late_switches += 1
+                prewarm_start_step = None
+            if (
+                previous_handover_step is not None
+                and step - previous_handover_step <= config.ping_pong_window_steps
+                and handover_from == previous_handover_to
+                and handover_to == previous_handover_from
+            ):
+                metrics.ping_pong_count += 1
+            previous_handover_step = step
+            previous_handover_from = handover_from
+            previous_handover_to = handover_to
+            previous_link = status.active_link
 
         if status.active_link == "le":
             active = le
@@ -286,6 +335,10 @@ def run_simulation(
     elif metrics.handovers > 0:
         metrics.bearer_switch_time_ms = config.step_ms
     metrics.gap_free = switch_interruption_ms <= 0.0 and handover.status.cold_switches == 0
+    if prewarm_episode_steps > 0 and not prewarm_episode_committed:
+        metrics.unnecessary_prewarm_events += 1
+    if lead_times_ms:
+        metrics.average_prediction_lead_time_ms = sum(lead_times_ms) / len(lead_times_ms)
     summary = metrics.summary()
     summary["profile"] = profile_name
     summary["scenario"] = scenario_name
