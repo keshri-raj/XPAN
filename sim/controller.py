@@ -68,8 +68,9 @@ class XpanReactiveController:
         p2p: LinkQuality,
         whc: LinkQuality,
         env: EnvironmentState,
+        buffered_ms: float = 0.0,
     ) -> ControllerDecision:
-        del current_link, le
+        del current_link, le, buffered_ms
         env_class = classify_environment(env)
         # Reactive switching waits until the current bearer already looks bad,
         # which is why it tends to model cold handovers.
@@ -156,6 +157,7 @@ class XpanPredictiveController:
         p2p: LinkQuality,
         whc: LinkQuality,
         env: EnvironmentState,
+        buffered_ms: float = 0.0,
     ) -> ControllerDecision:
         del le
         env_class = classify_environment(env)
@@ -185,6 +187,18 @@ class XpanPredictiveController:
             + 0.1 * (0.5 if whc.latency_ms + whc.jitter_ms <= p2p.latency_ms + p2p.jitter_ms + 4.0 else -0.5)
         )
         expected_switch_gain += 0.35 * (whc_suitability - p2p_suitability)
+
+        dynamic_prewarm_threshold = self.prewarm_threshold
+        if env.motion_away < 0.3:
+            dynamic_prewarm_threshold += 0.05
+            
+        if buffered_ms > 40.0:
+            buffer_risk_reduction = min(0.15, (buffered_ms - 40.0) * 0.005)
+            risk = max(0.0, risk - buffer_risk_reduction)
+            dynamic_prewarm_threshold += 0.02
+            
+        whc_ready = whc.success_prob > 0.8 and env.backhaul_load < 0.6 and env.ap_quality > 0.75
+
         if risk >= self.switch_threshold:
             self.high_risk_steps += 1
         else:
@@ -217,12 +231,14 @@ class XpanPredictiveController:
             # Prewarming means the WHC bearer is being prepared before the
             # active P2P bearer has completely failed.
             prewarm_whc=current_link == "p2p"
+            and whc_ready
             and (
-                risk >= self.prewarm_threshold
+                risk >= dynamic_prewarm_threshold
                 or expected_switch_gain >= self.predictive_prewarm_gain_threshold
             ),
             target_link="whc"
             if current_link == "p2p"
+            and whc_ready
             and self.high_risk_steps >= self.hold_steps
             and self.high_gain_steps >= self.hold_steps
             and whc_suitability >= p2p_suitability + 0.04
@@ -271,6 +287,7 @@ class ServiceAwareController:
         p2p: LinkQuality,
         whc: LinkQuality,
         env: EnvironmentState,
+        buffered_ms: float = 0.0,
     ) -> ControllerDecision:
         env_class = classify_environment(env)
         le_suitability = score_bearer_suitability("le", le, env, current_link)
@@ -301,7 +318,7 @@ class ServiceAwareController:
                     environment_class=env_class,
                 )
 
-            predictive = self.predictive.decide(current_link, le, p2p, whc, env)
+            predictive = self.predictive.decide(current_link, le, p2p, whc, env, buffered_ms)
             if predictive.target_link == "whc" and whc_suitability >= max(le_suitability, p2p_suitability) + 0.02:
                 return predictive
             if current_link == "whc" and predictive.target_link == "p2p":

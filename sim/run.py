@@ -214,7 +214,7 @@ def run_simulation(
         if controller is None:
             status = handover.status
         else:
-            decision = controller.decide(handover.status.active_link, le, p2p, whc, env)
+            decision = controller.decide(handover.status.active_link, le, p2p, whc, env, audio.status.buffered_ms)
             status = handover.update(decision)
             target_suitability_total += decision.target_suitability
             target_suitability_samples += 1
