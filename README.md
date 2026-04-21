@@ -31,6 +31,16 @@ Important note:
 
 - Do not run `python sim/run.py` directly. Use `python -m sim.run` from the repo root.
 
+### Visualization UI
+
+A web-based interactive dashboard is included to visually compare the handoff strategies side-by-side. To launch the UI, run the following command from the repository root:
+
+```bash
+python3.10 server.py
+```
+
+Then, open your web browser and navigate to `http://127.0.0.1:8000`.
+
 ### What The Simulator Runs
 
 The default entrypoint iterates through all built-in combinations of:
@@ -111,6 +121,12 @@ The predictive handover outputs should now be read in two stages:
   - check `average_prediction_lead_time_ms`, `late_switches`, and `gap_free`
 - Did the controller choose a good destination bearer?
   - check `poor_target_handoffs` and `average_target_suitability`
+
+#### Energy vs. Audio Continuity Tradeoff
+
+You may notice that `interruptions_ms` (Audio Interruption) sometimes degrades in the **Predictive** profile compared to the **Reactive** profile. This is an intentional efficiency tradeoff caused by the **WHC Readiness Gate**:
+- **Reactive:** Blindly switches to the WHC network when P2P gets weak, even if WHC is congested. This might accidentally salvage a few packets but burns massive amounts of energy.
+- **Predictive:** Analyzes the WHC network and *refuses* to switch if it's unstable or congested. It rides out the storm on the weak P2P connection instead. This saves an incredible amount of battery life, but staying on the weak connection means more dropped packets, leading to a higher Audio Interruption time.
 
 ### Main Files To Modify
 
