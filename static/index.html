@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>XPAN Handoff Visualizer</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <div class="background-decor"></div>
+    <div class="container">
+        <header>
+            <h1>XPAN Handoff Visualizer</h1>
+            <p>Compare Reactive vs. Predictive handover strategies.</p>
+        </header>
+
+        <div class="controls glass-panel">
+            <div class="control-group">
+                <label for="scenario">Scenario</label>
+                <select id="scenario">
+                    <option value="walk_away">Walk Away</option>
+                    <option value="body_blockage">Body Blockage</option>
+                    <option value="mesh_backhaul_stress">Mesh Backhaul Stress</option>
+                    <option value="service_aware_use_cases">Service Aware Use Cases</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <label for="strategy">Power Strategy</label>
+                <select id="strategy">
+                    <option value="adaptive_twt">Adaptive TWT</option>
+                    <option value="predictive_prewake">Predictive Prewake</option>
+                    <option value="always_on">Always On</option>
+                    <option value="static_twt">Static TWT</option>
+                </select>
+            </div>
+            <button id="run-btn" class="btn">Run Simulation</button>
+        </div>
+
+        <div id="loading" class="hidden">
+            <div class="spinner"></div>
+            <p>Simulating Handover Strategies...</p>
+        </div>
+
+        <div id="results" class="hidden">
+            <div class="metrics-grid" id="metrics-grid">
+                <!-- Metrics will be injected here -->
+            </div>
+        </div>
+    </div>
+    <script src="/static/app.js"></script>
+</body>
+</html>
