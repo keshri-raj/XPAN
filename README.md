@@ -61,6 +61,7 @@ For each scenario/profile/strategy combination, the simulator prints a result bl
   - `profile`
   - `scenario`
   - `power_strategy`
+  - `environment_class`
   - `initial_link`
   - `handover_target`
   - `service_type`
@@ -84,6 +85,8 @@ For each scenario/profile/strategy combination, the simulator prints a result bl
   - `unnecessary_prewarm_events`
   - `ping_pong_count`
   - `average_prediction_lead_time_ms`
+  - `poor_target_handoffs`
+  - `average_target_suitability`
 - power metrics:
   - `energy_mj`
   - `average_power_mw`
@@ -101,6 +104,13 @@ For each scenario/profile/strategy combination, the simulator prints a result bl
   - `kpi_checks`
 
 `kpi_checks` is the quickest way to see whether a given policy meets the simulator's current working targets.
+
+The predictive handover outputs should now be read in two stages:
+
+- Did the controller identify risk early enough?
+  - check `average_prediction_lead_time_ms`, `late_switches`, and `gap_free`
+- Did the controller choose a good destination bearer?
+  - check `poor_target_handoffs` and `average_target_suitability`
 
 ### Main Files To Modify
 
@@ -256,6 +266,40 @@ What has now been implemented from these use cases:
   - phone low-power mode
 
 ## Change Log
+
+### 2026-04-21: Added environment-aware handover prediction and target suitability scoring
+
+Why this addition was made:
+
+- XPAN predictive handover should not switch early unless the target bearer is also likely to be good.
+- Predicting source-bearer degradation without evaluating destination-bearer quality can lead to wasteful or harmful handovers.
+
+What was added:
+
+- Environment classification for situations such as:
+  - `steady_state`
+  - `walking_away`
+  - `body_blockage`
+  - `wifi_congestion`
+  - `mesh_stress`
+  - `voice_call`
+  - `phone_low_power`
+- Bearer suitability scoring for `LE`, `P2P`, and `WHC`
+- Predictive switching logic that combines:
+  - projected future bearer quality
+  - expected switch gain
+  - service-aware suitability of the target bearer
+- New summary outputs:
+  - `environment_class`
+  - `poor_target_handoffs`
+  - `average_target_suitability`
+
+Why this matters:
+
+- It moves the simulator closer to a true XPAN policy model rather than a generic threshold handover model.
+- It helps answer the more important question:
+  - not just "when should we switch?"
+  - but "should we switch to that bearer at all?"
 
 ### 2026-04-21: Added short-horizon predictive handover scoring
 

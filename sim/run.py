@@ -3,7 +3,7 @@ import math
 from sim.audio import AudioStream
 from sim.config import SimulationConfig
 from sim.controller import ServiceAwareController, XpanPredictiveController, XpanReactiveController
-from sim.environment import build_scenarios
+from sim.environment import build_scenarios, classify_environment
 from sim.handover import HandoverEngine
 from sim.link_models import LELinkModel, P2PLinkModel, WHCLinkModel
 from sim.metrics import SimulationMetrics
@@ -191,14 +191,20 @@ def run_simulation(
     prewarm_episode_steps = 0
     prewarm_episode_committed = False
     lead_times_ms: list[float] = []
+    target_suitability_total = 0.0
+    target_suitability_samples = 0
+    environment_class_counts: dict[str, int] = {}
     previous_link = initial_link
     previous_handover_step: int | None = None
     previous_handover_from = initial_link
     previous_handover_to = initial_link
+    environment_class = "steady_state"
     steps = int(config.duration_s * 1000 / config.step_ms)
     for step in range(steps):
         time_s = step * config.step_ms / 1000.0
         env = scenario.state_at(time_s)
+        environment_class = classify_environment(env)
+        environment_class_counts[environment_class] = environment_class_counts.get(environment_class, 0) + 1
         active_service_type = env.service_type
         phone_low_power = env.phone_low_power
         le = le_model.quality(env)
@@ -210,6 +216,8 @@ def run_simulation(
         else:
             decision = controller.decide(handover.status.active_link, le, p2p, whc, env)
             status = handover.update(decision)
+            target_suitability_total += decision.target_suitability
+            target_suitability_samples += 1
         if status.whc_prewarmed_steps > 0:
             prewarm_episode_steps += 1
         elif prewarm_episode_steps > 0:
@@ -233,7 +241,11 @@ def run_simulation(
                     metrics.early_switches += 1
                 if status.overlap_steps_remaining == 0 or p2p.success_prob < 0.8:
                     metrics.late_switches += 1
+                if decision.target_suitability < 0.62:
+                    metrics.poor_target_handoffs += 1
                 prewarm_start_step = None
+            elif decision.target_suitability < 0.58:
+                metrics.poor_target_handoffs += 1
             if (
                 previous_handover_step is not None
                 and step - previous_handover_step <= config.ping_pong_window_steps
@@ -339,12 +351,15 @@ def run_simulation(
         metrics.unnecessary_prewarm_events += 1
     if lead_times_ms:
         metrics.average_prediction_lead_time_ms = sum(lead_times_ms) / len(lead_times_ms)
+    if target_suitability_samples:
+        metrics.average_target_suitability = target_suitability_total / target_suitability_samples
     summary = metrics.summary()
     summary["profile"] = profile_name
     summary["scenario"] = scenario_name
     summary["power_strategy"] = power_strategy_name
     summary["service_type"] = active_service_type
     summary["phone_low_power"] = float(phone_low_power)
+    summary["environment_class"] = max(environment_class_counts, key=environment_class_counts.get) if environment_class_counts else environment_class
     summary["active_band"] = active.band
     summary["initial_link"] = initial_link
     summary["handover_target"] = handover_target

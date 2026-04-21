@@ -1,7 +1,7 @@
 from collections import deque
 from dataclasses import dataclass
 
-from sim.environment import EnvironmentState
+from sim.environment import EnvironmentState, classify_environment
 from sim.link_models import LinkQuality
 
 
@@ -10,6 +10,54 @@ class ControllerDecision:
     prewarm_whc: bool = False
     target_link: str | None = None
     force_switch: bool = False
+    target_suitability: float = 0.0
+    environment_class: str = "steady_state"
+
+
+def score_bearer_suitability(
+    link_name: str,
+    quality: LinkQuality,
+    env: EnvironmentState,
+    current_link: str,
+) -> float:
+    service = env.service_type
+    reliability = quality.success_prob
+    responsiveness = max(0.0, 1.0 - (quality.latency_ms + quality.jitter_ms) / 80.0)
+    throughput = min(1.0, quality.data_rate_mbps / 2.5)
+    energy_fit = {
+        "le": 0.95,
+        "p2p": 0.72,
+        "whc": 0.4,
+    }[link_name]
+    continuity_bonus = 0.08 if link_name == current_link else 0.0
+
+    if service == "voice_call" or env.phone_low_power:
+        score = (
+            0.45 * reliability
+            + 0.25 * responsiveness
+            + 0.2 * energy_fit
+            + 0.1 * (1.0 if link_name == "le" else 0.4)
+        )
+    else:
+        score = (
+            0.38 * reliability
+            + 0.22 * responsiveness
+            + 0.24 * throughput
+            + 0.08 * energy_fit
+            + 0.08 * (1.0 if quality.band == "5 GHz" else 0.45)
+        )
+
+    env_class = classify_environment(env)
+    if env_class == "body_blockage" and link_name == "p2p":
+        score -= 0.12
+    elif env_class == "walking_away" and link_name == "p2p":
+        score -= 0.18
+    elif env_class == "mesh_stress" and link_name == "whc":
+        score -= 0.16
+    elif env_class == "wifi_congestion" and link_name in {"p2p", "whc"}:
+        score -= 0.06
+
+    return max(0.0, min(1.0, score + continuity_bonus))
 
 
 class XpanReactiveController:
@@ -22,15 +70,18 @@ class XpanReactiveController:
         env: EnvironmentState,
     ) -> ControllerDecision:
         del current_link, le
-        del env
+        env_class = classify_environment(env)
         # Reactive switching waits until the current bearer already looks bad,
         # which is why it tends to model cold handovers.
+        whc_suitability = score_bearer_suitability("whc", whc, env, "p2p")
         return ControllerDecision(
             prewarm_whc=False,
             target_link="whc"
             if (p2p.success_prob < 0.9 or p2p.latency_ms + p2p.jitter_ms > 26.0)
             and whc.success_prob > p2p.success_prob
             else None,
+            target_suitability=whc_suitability,
+            environment_class=env_class,
         )
 
 
@@ -107,12 +158,15 @@ class XpanPredictiveController:
         env: EnvironmentState,
     ) -> ControllerDecision:
         del le
+        env_class = classify_environment(env)
         self.rssi_window.append(p2p.rssi_like)
         self.retry_window.append(p2p.retry_rate)
         self.latency_window.append(p2p.latency_ms + p2p.jitter_ms)
         rssi_drop = self._trend(self.rssi_window)
         retry_rise = max(0.0, self.retry_window[-1] - self.retry_window[0]) if len(self.retry_window) > 1 else 0.0
         projected_p2p_success, projected_whc_success = self._project_future_quality(p2p, whc, env)
+        p2p_suitability = score_bearer_suitability("p2p", p2p, env, current_link)
+        whc_suitability = score_bearer_suitability("whc", whc, env, current_link)
         # This predictive score estimates whether the direct path is heading
         # toward trouble over the next short horizon rather than reacting only
         # to the current instant.
@@ -130,6 +184,7 @@ class XpanPredictiveController:
             + 0.2 * (whc.success_prob - p2p.success_prob)
             + 0.1 * (0.5 if whc.latency_ms + whc.jitter_ms <= p2p.latency_ms + p2p.jitter_ms + 4.0 else -0.5)
         )
+        expected_switch_gain += 0.35 * (whc_suitability - p2p_suitability)
         if risk >= self.switch_threshold:
             self.high_risk_steps += 1
         else:
@@ -154,6 +209,8 @@ class XpanPredictiveController:
             return ControllerDecision(
                 prewarm_whc=False,
                 target_link="p2p" if self.p2p_recovery_steps >= self.return_hold_steps else None,
+                target_suitability=p2p_suitability,
+                environment_class=env_class,
             )
 
         return ControllerDecision(
@@ -168,8 +225,10 @@ class XpanPredictiveController:
             if current_link == "p2p"
             and self.high_risk_steps >= self.hold_steps
             and self.high_gain_steps >= self.hold_steps
-            and whc.success_prob >= p2p.success_prob
+            and whc_suitability >= p2p_suitability + 0.04
             else None,
+            target_suitability=whc_suitability,
+            environment_class=env_class,
         )
 
 
@@ -213,28 +272,62 @@ class ServiceAwareController:
         whc: LinkQuality,
         env: EnvironmentState,
     ) -> ControllerDecision:
+        env_class = classify_environment(env)
+        le_suitability = score_bearer_suitability("le", le, env, current_link)
+        p2p_suitability = score_bearer_suitability("p2p", p2p, env, current_link)
+        whc_suitability = score_bearer_suitability("whc", whc, env, current_link)
         if env.phone_low_power or env.service_type == "voice_call":
             self.p2p_preference_steps = 0
             self.le_fallback_steps = 0
-            return ControllerDecision(prewarm_whc=False, target_link="le", force_switch=True)
+            return ControllerDecision(
+                prewarm_whc=False,
+                target_link="le",
+                force_switch=True,
+                target_suitability=le_suitability,
+                environment_class=env_class,
+            )
 
         if env.service_type == "music":
-            p2p_preferred = p2p.success_prob >= 0.9 and p2p.latency_ms + p2p.jitter_ms <= 24.0
-            weak_direct_path = p2p.success_prob < 0.78 or env.distance_m > 6.5
+            p2p_preferred = p2p_suitability >= max(le_suitability, whc_suitability) + 0.03
+            weak_direct_path = p2p.success_prob < 0.78 or env.distance_m > 6.5 or env_class == "walking_away"
             self.p2p_preference_steps = self._track_steps(p2p_preferred, self.p2p_preference_steps)
             self.le_fallback_steps = self._track_steps(weak_direct_path, self.le_fallback_steps)
 
             if current_link == "le" and self.p2p_preference_steps >= 3:
-                return ControllerDecision(prewarm_whc=False, target_link="p2p")
+                return ControllerDecision(
+                    prewarm_whc=False,
+                    target_link="p2p",
+                    target_suitability=p2p_suitability,
+                    environment_class=env_class,
+                )
 
             predictive = self.predictive.decide(current_link, le, p2p, whc, env)
-            if predictive.target_link == "whc" and whc.success_prob >= 0.88:
+            if predictive.target_link == "whc" and whc_suitability >= max(le_suitability, p2p_suitability) + 0.02:
                 return predictive
             if current_link == "whc" and predictive.target_link == "p2p":
                 return predictive
-            if self.le_fallback_steps >= 3 and whc.success_prob < p2p.success_prob + 0.08:
-                return ControllerDecision(prewarm_whc=False, target_link="le")
+            if self.le_fallback_steps >= 3 and le_suitability >= whc_suitability - 0.01:
+                return ControllerDecision(
+                    prewarm_whc=False,
+                    target_link="le",
+                    target_suitability=le_suitability,
+                    environment_class=env_class,
+                )
             if current_link != "p2p" and self.p2p_preference_steps >= 3:
-                return ControllerDecision(prewarm_whc=False, target_link="p2p")
+                return ControllerDecision(
+                    prewarm_whc=False,
+                    target_link="p2p",
+                    target_suitability=p2p_suitability,
+                    environment_class=env_class,
+                )
 
-        return ControllerDecision(prewarm_whc=False, target_link=current_link)
+        return ControllerDecision(
+            prewarm_whc=False,
+            target_link=current_link,
+            target_suitability={
+                "le": le_suitability,
+                "p2p": p2p_suitability,
+                "whc": whc_suitability,
+            }[current_link],
+            environment_class=env_class,
+        )

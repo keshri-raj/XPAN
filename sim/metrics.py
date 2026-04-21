@@ -34,6 +34,8 @@ class SimulationMetrics:
     unnecessary_prewarm_events: int = 0
     ping_pong_count: int = 0
     average_prediction_lead_time_ms: float = 0.0
+    poor_target_handoffs: int = 0
+    average_target_suitability: float = 0.0
 
     def summary(self) -> dict[str, float]:
         total_packets = self.delivered_packets + self.lost_packets
@@ -57,6 +59,8 @@ class SimulationMetrics:
             "unnecessary_prewarm_events": float(self.unnecessary_prewarm_events),
             "ping_pong_count": float(self.ping_pong_count),
             "average_prediction_lead_time_ms": round(self.average_prediction_lead_time_ms, 2),
+            "poor_target_handoffs": float(self.poor_target_handoffs),
+            "average_target_suitability": round(self.average_target_suitability, 3),
             "energy_mj": round(self.energy_mj, 2),
             "average_power_mw": round(self.average_power_mw, 2),
             "energy_per_delivered_packet_uj": round(self.energy_per_delivered_packet_uj, 2),

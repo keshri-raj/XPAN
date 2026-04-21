@@ -14,6 +14,22 @@ class EnvironmentState:
     phone_low_power: bool = False
 
 
+def classify_environment(env: EnvironmentState) -> str:
+    if env.phone_low_power:
+        return "phone_low_power"
+    if env.service_type == "voice_call":
+        return "voice_call"
+    if env.backhaul_load > 0.5 or env.ap_quality < 0.8:
+        return "mesh_stress"
+    if env.body_blockage_db >= 12.0 and env.motion_away < 0.55:
+        return "body_blockage"
+    if env.motion_away > 0.75 and env.distance_m > 4.0:
+        return "walking_away"
+    if env.wifi_congestion > 0.45:
+        return "wifi_congestion"
+    return "steady_state"
+
+
 class Scenario:
     name: str
 
